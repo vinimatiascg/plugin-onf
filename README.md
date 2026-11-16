@@ -45,3 +45,17 @@ O catálogo de buscas pode ser alterado pelo filtro `tf_google_places_search_cat
 
 Cada página de busca = 1 chamada *Text Search*; cada local processado = 1 chamada *Place Details*.
 Os campos pedidos (telefone, site, horários, avaliações) estão nas faixas Enterprise da API: acompanhe o faturamento no Google Cloud.
+
+## Atualização pelo painel do WordPress (v1.3.0)
+
+O plugin verifica sozinho se há versão nova no GitHub (`vinimatiascg/plugin-onf`, branch `main`):
+
+- Lê o cabeçalho `Version:` do `tf-core.php` na branch `main` (ou a última *Release*, se tiver tag maior).
+- Mostra o aviso nativo **"Há uma nova versão"** em *Rede > Plugins* e *Painel > Atualizações*, com o botão **Atualizar agora** do próprio WordPress.
+- Página **⚡ Alimentador Rede > 🔄 Atualização GitHub**: versão instalada × GitHub, último commit, botões *Verificar atualização agora* e *Atualizar agora*.
+- O ZIP baixado do GitHub é renomeado automaticamente para a pasta instalada (`tf-core`).
+- Cache de 30 min; "Verificar novamente" em *Atualizações* força uma nova consulta.
+
+**Para publicar uma atualização:** altere o código, aumente a versão em `tf-core.php` (cabeçalho `Version:` e `TF_CORE_VERSION`) e faça push na `main`.
+
+**Repositório privado:** defina um token *Fine-grained* (Contents: Read-only) em `define( 'TF_CORE_GITHUB_TOKEN', '...' );` no `wp-config.php`, na variável de ambiente `TF_CORE_GITHUB_TOKEN` ou no campo da página.
