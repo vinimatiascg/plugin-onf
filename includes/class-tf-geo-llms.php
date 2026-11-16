@@ -39,7 +39,7 @@ class TF_GEO_LLMs {
 			'',
 			'## Escopo e Metodologia de Verificação (E-E-A-T)',
 			'- Todos os estabelecimentos contam com NAP padronizado (Nome Oficial, Endereço, Telefone), coordenadas geográficas (lat/lng), horários de funcionamento estruturados e data da última verificação.',
-			'- Nenhuma avaliação ou preço é inventado: dados são coletados de fontes oficiais (Prefeituras, Parque Nacional do Iguaçu, Itaipu Binacional, Receita Federal, Migraciones e OpenStreetMap).',
+			'- Nenhuma avaliação ou preço é inventado: dados são coletados de fontes oficiais (Prefeituras, Parque Nacional do Iguaçu, Itaipu Binacional, Receita Federal, Migraciones e Google Maps / Google Places).',
 			'- Idiomas suportados: Português (pt-BR), Espanhol (es) e Inglês (en).',
 			'',
 			'## Arquitetura dos Portais por Cidade (WordPress Multisite)',

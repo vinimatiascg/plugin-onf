@@ -2,8 +2,8 @@
 /**
  * Plugin Name: Onde na Fronteira — Core Network Plugin (tf-core)
  * Plugin URI:  https://ondenafronteira.com.br
- * Description: Arquitetura central da rede Onde na Fronteira: Custom Post Types, Taxonomias, Metacampos REST, Deduplicação, Ingestão IA, Schema.org JSON-LD, SEO Técnico, GEO (llms.txt), Google News Sitemap e Social Discovery.
- * Version:     1.1.0
+ * Description: Arquitetura central da rede Onde na Fronteira: Custom Post Types, Taxonomias, Metacampos REST, Deduplicação, Ingestão IA, Schema.org JSON-LD, SEO Técnico, GEO (llms.txt), Google News Sitemap, Social Discovery e Alimentador Google Maps / Google Places.
+ * Version:     1.2.0
  * Author:      Hermes Agent
  * Author URI:  https://ondenafronteira.com.br
  * License:     GPL-2.0+
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'TF_CORE_VERSION', '1.1.0' );
+define( 'TF_CORE_VERSION', '1.2.0' );
 define( 'TF_CORE_PATH', plugin_dir_path( __FILE__ ) );
 define( 'TF_CORE_URL', plugin_dir_url( __FILE__ ) );
 
@@ -32,6 +32,7 @@ require_once TF_CORE_PATH . 'includes/class-tf-social-discovery.php';
 require_once TF_CORE_PATH . 'includes/class-tf-approval-queue.php';
 require_once TF_CORE_PATH . 'includes/class-tf-monetization.php';
 require_once TF_CORE_PATH . 'includes/class-tf-shortcodes-elementor.php';
+require_once TF_CORE_PATH . 'includes/class-tf-google-places.php';
 require_once TF_CORE_PATH . 'includes/class-tf-harvester-admin.php';
 require_once TF_CORE_PATH . 'includes/class-tf-analytics.php';
 
@@ -73,7 +74,7 @@ function tf_get_establishment_post_types(): array {
 function tf_get_current_city_context(): array {
 	$slug = get_option( 'tf_city_slug', '' );
 	if ( empty( $slug ) ) {
-		$path = trim( get_blog_details()->path ?? '/', '/' );
+		$path = function_exists( 'get_blog_details' ) ? trim( get_blog_details()->path ?? '/', '/' ) : '';
 		$slug = $path ? $path : 'raiz';
 	}
 

@@ -73,6 +73,8 @@ class TF_Meta_Fields {
 			'_tf_rating_value'        => array( 'type' => 'number',  'default' => 0.0,        'label' => 'Nota de Avaliação Real Verificável (1.0 a 5.0)' ),
 			'_tf_rating_count'        => array( 'type' => 'integer', 'default' => 0,          'label' => 'Total de Avaliações Reais Verificáveis' ),
 			'_tf_rating_source'       => array( 'type' => 'string',  'default' => '',         'label' => 'Fonte Verificável da Avaliação (URL/Nome)' ),
+			'_tf_google_place_id'     => array( 'type' => 'string',  'default' => '',         'label' => 'Google Place ID (preenchido pelo Alimentador)' ),
+			'_tf_google_maps_url'     => array( 'type' => 'string',  'default' => '',         'label' => 'Link no Google Maps' ),
 			'_tf_faq_json'            => array( 'type' => 'string',  'default' => '',         'label' => 'Perguntas Frequentes FAQPage (JSON array)' ),
 			'_tf_social_drafts_json'  => array( 'type' => 'string',  'default' => '',         'label' => 'Rascunhos para Redes Sociais (JSON)' ),
 		);
@@ -130,7 +132,7 @@ class TF_Meta_Fields {
 				return (float) $value;
 			case 'string':
 			default:
-				if ( in_array( $meta_key, array( '_tf_website', '_tf_source_url', '_tf_facebook', '_tf_tiktok', '_tf_logo_url' ), true ) ) {
+				if ( in_array( $meta_key, array( '_tf_website', '_tf_source_url', '_tf_facebook', '_tf_tiktok', '_tf_logo_url', '_tf_google_maps_url' ), true ) ) {
 					return esc_url_raw( (string) $value );
 				}
 				if ( '_tf_email' === $meta_key ) {
