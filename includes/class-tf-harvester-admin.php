@@ -73,6 +73,14 @@ class TF_Harvester_Admin {
 			TF_Google_Places::run_network( 5, 5 );
 		} elseif ( 'google_process' === $batch_type ) {
 			TF_Google_Places::run_network( 0, 15 );
+		} elseif ( 'official_images' === $batch_type ) {
+			$found = 0;
+			TF_Google_Places::for_each_city_site(
+				function () use ( &$found ) {
+					$found += TF_Official_Images::backfill( 15 )['found'];
+				}
+			);
+			update_site_option( 'tf_places_last_run', array( 'finished_at' => current_time( 'mysql' ), 'mode' => 'images', 'found' => 0, 'created' => 0, 'updated' => 0, 'skipped' => 0, 'images' => $found, 'errors' => array() ) );
 		} else {
 			TF_Google_Places::run_network( 2, 10 );
 		}
@@ -166,6 +174,7 @@ class TF_Harvester_Admin {
 
 		$last_run         = (array) get_site_option( 'tf_places_last_run', array() );
 		$usage            = TF_Google_Places::get_daily_usage();
+		$img_stats        = TF_Official_Images::get_stats();
 		$auto_on          = TF_Google_Places::is_enabled();
 		$next_cron        = wp_next_scheduled( TF_Google_Places::CRON_HOOK );
 		$reason_labels    = array(
@@ -209,6 +218,9 @@ class TF_Harvester_Admin {
 						);
 						?>
 					</p>
+					<?php if ( isset( $last_run['images'] ) ) : ?>
+						<p>📷 <?php echo esc_html( (string) (int) $last_run['images'] ); ?> foto(s) obtida(s) dos sites oficiais nesta rodada.</p>
+					<?php endif; ?>
 					<?php foreach ( (array) ( $last_run['errors'] ?? array() ) as $err ) : ?>
 						<p style="color:#B91C1C;">⚠ <?php echo esc_html( (string) $err ); ?></p>
 					<?php endforeach; ?>
@@ -255,6 +267,17 @@ class TF_Harvester_Admin {
 						<?php endif; ?>
 					</p>
 				</div>
+			</div>
+
+			<div class="card" style="margin:0 0 24px;padding:16px 20px;max-width:none;border-left:4px solid #8B5CF6;">
+				<h3 style="margin:0 0 6px;">📷 Fotos dos estabelecimentos</h3>
+				<p style="margin:0 0 6px;">
+					<strong><?php echo esc_html( (string) $img_stats['with_image'] ); ?></strong> com foto ·
+					<strong><?php echo esc_html( (string) $img_stats['pending_check'] ); ?></strong> aguardando verificação do site ·
+					<strong><?php echo esc_html( (string) $img_stats['not_found'] ); ?></strong> site sem imagem aproveitável ·
+					<strong><?php echo esc_html( (string) $img_stats['no_website'] ); ?></strong> sem site no Google
+				</p>
+				<p class="description" style="margin:0;">As fotos vêm do <strong>site oficial</strong> de cada local (imagem de capa <code>og:image</code>), pois os termos do Google não permitem salvar fotos do Google Maps. Sites que não tinham imagem são verificados de novo a cada 30 dias. Locais sem site podem receber foto manualmente na edição.</p>
 			</div>
 
 			<?php if ( ! empty( $stats['cities'] ) || ! empty( $stats['reasons'] ) ) : ?>
@@ -319,6 +342,14 @@ class TF_Harvester_Admin {
 							<input type="hidden" name="tf_batch_type" value="google_scan" />
 							<button type="submit" class="button button-secondary" <?php disabled( ! $has_key ); ?>>
 								🔍 Descobrir Novos Locais no Google
+							</button>
+						</form>
+						<form method="post" style="display:inline;">
+							<?php wp_nonce_field( 'tf_trigger_harvest_action', 'tf_trigger_harvest_nonce' ); ?>
+							<input type="hidden" name="tf_is_network" value="<?php echo esc_attr( $is_network ); ?>" />
+							<input type="hidden" name="tf_batch_type" value="official_images" />
+							<button type="submit" class="button button-secondary">
+								📷 Buscar Fotos nos Sites Oficiais (15 por cidade)
 							</button>
 						</form>
 						<a class="button button-primary button-hero" href="<?php echo esc_url( admin_url( 'admin.php?page=tf-approval-queue' ) ); ?>" style="line-height:2.1;">

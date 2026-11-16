@@ -3,7 +3,7 @@
  * Plugin Name: Onde na Fronteira — Core Network Plugin (tf-core)
  * Plugin URI:  https://ondenafronteira.com.br
  * Description: Arquitetura central da rede Onde na Fronteira: Custom Post Types, Taxonomias, Metacampos REST, Deduplicação, Ingestão IA, Schema.org JSON-LD, SEO Técnico, GEO (llms.txt), Google News Sitemap, Social Discovery e Alimentador Google Maps / Google Places.
- * Version:     1.4.1
+ * Version:     1.5.0
  * Author:      Hermes Agent
  * Author URI:  https://ondenafronteira.com.br
  * License:     GPL-2.0+
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'TF_CORE_VERSION', '1.4.1' );
+define( 'TF_CORE_VERSION', '1.5.0' );
 define( 'TF_CORE_PATH', plugin_dir_path( __FILE__ ) );
 define( 'TF_CORE_URL', plugin_dir_url( __FILE__ ) );
 
@@ -32,6 +32,7 @@ require_once TF_CORE_PATH . 'includes/class-tf-social-discovery.php';
 require_once TF_CORE_PATH . 'includes/class-tf-approval-queue.php';
 require_once TF_CORE_PATH . 'includes/class-tf-monetization.php';
 require_once TF_CORE_PATH . 'includes/class-tf-shortcodes-elementor.php';
+require_once TF_CORE_PATH . 'includes/class-tf-official-images.php';
 require_once TF_CORE_PATH . 'includes/class-tf-google-places.php';
 require_once TF_CORE_PATH . 'includes/class-tf-harvester-admin.php';
 require_once TF_CORE_PATH . 'includes/class-tf-github-updater.php';

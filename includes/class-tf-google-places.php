@@ -389,6 +389,7 @@ class TF_Google_Places {
 			'updated'    => 0,
 			'skipped'    => 0,
 			'refreshed'  => 0,
+			'images'     => 0,
 			'errors'     => array(),
 		);
 
@@ -456,6 +457,10 @@ class TF_Google_Places {
 							$summary['errors'][] = $city['name'] . ': ' . $err;
 						}
 					}
+
+					// Fotos dos sites oficiais (gratuito, sem API do Google): lote pequeno por rodada.
+					$img                = TF_Official_Images::backfill( 'auto' === $summary['mode'] ? 4 : 5 );
+					$summary['images'] += $img['found'];
 				}
 			);
 		} finally {

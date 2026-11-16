@@ -76,3 +76,13 @@ O plugin verifica sozinho se há versão nova no GitHub (`vinimatiascg/plugin-on
 - A descoberta usa **Text Search Essentials (IDs Only)**: gratuita e ilimitada.
 - **Limite mensal** (padrão 1.000): o plugin conta os detalhamentos no mês de cobrança do Google (zera dia 1º, horário do Pacífico), espalha o saldo pelos dias restantes e pausa o detalhamento ao atingir o limite, inclusive nos botões manuais. Use 0 para desligar o limite.
 - Meta diária padrão: 32 (32 × 31 = 992/mês).
+
+## Fotos dos sites oficiais (v1.5.0)
+
+Os termos do Google Maps Platform não permitem salvar fotos do Google Places, então a imagem destacada vem do **site oficial** de cada estabelecimento (o `websiteUri` obtido no Google):
+
+- Lê a página inicial e procura, em ordem: `og:image:secure_url`, `og:image`, `twitter:image`, `<link rel="image_src">` e `image` do JSON-LD.
+- Baixa, valida (JPG/PNG/WebP, mínimo 300×200 px, descarta ícones/SVG/GIF) e define como imagem destacada, com texto alternativo e o site como crédito (`_tf_image_credit_url`).
+- Ignora redes sociais e encurtadores (Instagram, Facebook, TikTok, WhatsApp, Linktree, Google...).
+- Roda junto do Alimentador (4 locais por cidade a cada 15 min) e pelo botão **📷 Buscar Fotos nos Sites Oficiais**. Sem custo de API do Google.
+- Sites sem imagem aproveitável são verificados de novo após 30 dias; o painel mostra quantos locais têm foto, aguardam verificação, não têm imagem no site ou não têm site.
