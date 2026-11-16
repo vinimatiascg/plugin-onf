@@ -26,6 +26,7 @@ class TF_Approval_Queue {
 		add_action( 'network_admin_menu', array( __CLASS__, 'register_admin_menu' ) );
 		add_action( 'admin_bar_menu', array( __CLASS__, 'add_admin_bar_badge' ), 90 );
 		add_action( 'admin_post_tf_queue_action', array( __CLASS__, 'handle_queue_actions' ) );
+		add_action( 'transition_post_status', array( __CLASS__, 'flush_pending_count' ), 10, 3 );
 	}
 
 	/**
@@ -73,6 +74,12 @@ class TF_Approval_Queue {
 	 * @return int
 	 */
 	public static function count_total_pending_network(): int {
+		// Cache curto: o contador aparece em todas as telas do admin e na barra superior.
+		$cached = get_site_transient( 'tf_pending_network_count' );
+		if ( false !== $cached ) {
+			return (int) $cached;
+		}
+
 		$cpts  = tf_get_establishment_post_types();
 		$total = 0;
 		$sites = is_multisite() ? get_sites( array( 'number' => 20 ) ) : array( (object) array( 'blog_id' => get_current_blog_id() ) );
@@ -90,7 +97,21 @@ class TF_Approval_Queue {
 			}
 		}
 
+		set_site_transient( 'tf_pending_network_count', $total, 2 * MINUTE_IN_SECONDS );
 		return $total;
+	}
+
+	/**
+	 * Invalida o contador quando um estabelecimento muda de status.
+	 *
+	 * @param string  $new_status Novo status.
+	 * @param string  $old_status Status anterior.
+	 * @param WP_Post $post       Post.
+	 */
+	public static function flush_pending_count( $new_status, $old_status, $post ): void {
+		if ( $new_status !== $old_status && $post instanceof WP_Post && in_array( $post->post_type, tf_get_establishment_post_types(), true ) ) {
+			delete_site_transient( 'tf_pending_network_count' );
+		}
 	}
 
 	/**

@@ -69,7 +69,8 @@ class TF_Harvester_Admin {
 		// Executa 1 rodada do alimentador Google Places (nativo em PHP, sem script externo).
 		$batch_type = sanitize_key( $_POST['tf_batch_type'] ?? 'google' );
 		if ( 'google_scan' === $batch_type ) {
-			TF_Google_Places::run_network( 5, 0 );
+			// Descobre (5 páginas por cidade) e já detalha um pequeno lote para aparecer na moderação.
+			TF_Google_Places::run_network( 5, 5 );
 		} elseif ( 'google_process' === $batch_type ) {
 			TF_Google_Places::run_network( 0, 15 );
 		} else {
@@ -163,6 +164,18 @@ class TF_Harvester_Admin {
 		$pending_list = array_slice( $pending_list, 0, 15 );
 
 		$last_run         = (array) get_site_option( 'tf_places_last_run', array() );
+		$usage            = TF_Google_Places::get_daily_usage();
+		$auto_on          = TF_Google_Places::is_enabled();
+		$next_cron        = wp_next_scheduled( TF_Google_Places::CRON_HOOK );
+		$reason_labels    = array(
+			'fora_da_cidade_BR'        => 'Fora da cidade (Brasil)',
+			'fora_da_cidade_PY'        => 'Fora da cidade (Paraguai)',
+			'fora_da_cidade_AR'        => 'Fora da cidade (Argentina)',
+			'fechado_permanentemente'  => 'Fechado permanentemente',
+			'parecido_com_post'        => 'Parecido com outro local já cadastrado',
+			'sem_nome'                 => 'Sem nome no Google',
+			'nao_encontrado_no_google' => 'Removido do Google',
+		);
 		$stats            = TF_Google_Places::get_queue_stats();
 		$has_key          = '' !== TF_Google_Places::get_api_key();
 		$google_queued    = $stats['queued'];
@@ -187,7 +200,7 @@ class TF_Harvester_Admin {
 						<?php
 						printf(
 							/* translators: 1: novos na fila, 2: criados, 3: atualizados, 4: ignorados */
-							esc_html__( '✓ Rodada concluída: %1$d novos locais na fila, %2$d enviados para moderação, %3$d atualizados, %4$d ignorados.', 'onde-na-fronteira' ),
+							esc_html__( '✓ Rodada concluída: %1$d locais novos descobertos no Google (aguardando detalhamento), %2$d enviados para a Fila de Moderação, %3$d já cadastrados atualizados, %4$d descartados.', 'onde-na-fronteira' ),
 							(int) ( $last_run['found'] ?? 0 ),
 							(int) ( $last_run['created'] ?? 0 ),
 							(int) ( $last_run['updated'] ?? 0 ),
@@ -201,33 +214,85 @@ class TF_Harvester_Admin {
 				</div>
 			<?php endif; ?>
 
+			<?php if ( $has_key && ! $auto_on ) : ?>
+				<div class="notice notice-warning"><p><strong>A varredura automática está desligada.</strong> Os locais descobertos só entram na Fila de Moderação quando são detalhados. Marque "Rodar automaticamente" nas configurações abaixo para o alimentador trabalhar sozinho ao longo do dia.</p></div>
+			<?php endif; ?>
+
 			<?php if ( ! $has_key ) : ?>
 				<div class="notice notice-error"><p><?php esc_html_e( 'Configure a chave da Google Places API no quadro "Google Maps / Google Places API" abaixo para ativar a varredura.', 'onde-na-fronteira' ); ?></p></div>
 			<?php endif; ?>
 
 			<!-- Painel de Métricas -->
-			<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));gap:18px;margin:24px 0;">
+			<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(220px, 1fr));gap:18px;margin:24px 0;">
 				<div class="card" style="margin:0;padding:20px;border-left:4px solid #0D9488;">
-					<h3 style="margin:0 0 8px;font-size:0.9rem;text-transform:uppercase;color:#64748B;">Fila Google Places</h3>
-					<div style="font-size:1.8rem;font-weight:700;color:#0F172A;"><?php echo esc_html( (string) $google_queued ); ?> na fila</div>
-					<p style="margin:6px 0 0;font-size:0.85rem;color:#059669;">● <?php echo esc_html( (string) $google_processed ); ?> já processados/auditados</p>
-					<?php if ( ! empty( $last_run['finished_at'] ) ) : ?>
-						<p style="margin:4px 0 0;font-size:0.8rem;color:#64748B;">Última rodada: <?php echo esc_html( (string) $last_run['finished_at'] ); ?></p>
-					<?php endif; ?>
+					<h3 style="margin:0 0 8px;font-size:0.9rem;text-transform:uppercase;color:#64748B;">1. Descobertos no Google</h3>
+					<div style="font-size:1.8rem;font-weight:700;color:#0F172A;"><?php echo esc_html( (string) $google_queued ); ?></div>
+					<p style="margin:6px 0 0;font-size:0.85rem;color:#64748B;">aguardando detalhamento (ainda não aparecem na moderação)</p>
 				</div>
 
 				<div class="card" style="margin:0;padding:20px;border-left:4px solid #D97706;">
-					<h3 style="margin:0 0 8px;font-size:0.9rem;text-transform:uppercase;color:#64748B;">Aguardando Moderação</h3>
-					<div style="font-size:1.8rem;font-weight:700;color:#0F172A;"><?php echo esc_html( (string) $total_pending ); ?> locais</div>
-					<p style="margin:6px 0 0;font-size:0.85rem;color:#64748B;">Prontos para aprovação rápida na rede</p>
+					<h3 style="margin:0 0 8px;font-size:0.9rem;text-transform:uppercase;color:#64748B;">2. Na Fila de Moderação</h3>
+					<div style="font-size:1.8rem;font-weight:700;color:#0F172A;"><?php echo esc_html( (string) $total_pending ); ?></div>
+					<p style="margin:6px 0 0;font-size:0.85rem;color:#64748B;">rascunhos pendentes prontos para aprovar</p>
+				</div>
+
+				<div class="card" style="margin:0;padding:20px;border-left:4px solid #059669;">
+					<h3 style="margin:0 0 8px;font-size:0.9rem;text-transform:uppercase;color:#64748B;">Processados (total)</h3>
+					<div style="font-size:1.8rem;font-weight:700;color:#0F172A;"><?php echo esc_html( (string) $google_processed ); ?></div>
+					<p style="margin:6px 0 0;font-size:0.85rem;color:#64748B;"><?php echo esc_html( (string) $stats['created'] ); ?> criados · <?php echo esc_html( (string) ( $stats['skipped'] + $stats['error'] ) ); ?> descartados</p>
 				</div>
 
 				<div class="card" style="margin:0;padding:20px;border-left:4px solid #3B82F6;">
-					<h3 style="margin:0 0 8px;font-size:0.9rem;text-transform:uppercase;color:#64748B;">Cidades Monitoradas</h3>
-					<div style="font-size:1.8rem;font-weight:700;color:#0F172A;">3 Destinos</div>
-					<p style="margin:6px 0 0;font-size:0.85rem;color:#64748B;">Foz do Iguaçu (BR), Ciudad del Este (PY) e Puerto Iguazú (AR)</p>
+					<h3 style="margin:0 0 8px;font-size:0.9rem;text-transform:uppercase;color:#64748B;">Hoje</h3>
+					<div style="font-size:1.8rem;font-weight:700;color:#0F172A;"><?php echo esc_html( (string) $usage['details'] ); ?> / <?php echo esc_html( (string) TF_Google_Places::get_daily_target() ); ?></div>
+					<p style="margin:6px 0 0;font-size:0.85rem;color:#64748B;">
+						detalhados hoje · <?php echo esc_html( (string) array_sum( (array) $usage['searches'] ) ); ?> páginas de busca<br>
+						<?php if ( $auto_on && $next_cron ) : ?>
+							Próxima rodada automática: <?php echo esc_html( wp_date( 'H:i', (int) $next_cron ) ); ?>
+						<?php else : ?>
+							<span style="color:#B45309;">Automático desligado</span>
+						<?php endif; ?>
+					</p>
 				</div>
 			</div>
+
+			<?php if ( ! empty( $stats['cities'] ) || ! empty( $stats['reasons'] ) ) : ?>
+				<div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));gap:18px;margin:0 0 24px;">
+					<?php if ( ! empty( $stats['cities'] ) ) : ?>
+						<div class="card" style="margin:0;padding:16px 20px;max-width:none;">
+							<h3 style="margin-top:0;">Por cidade</h3>
+							<table class="widefat striped">
+								<thead><tr><th>Cidade</th><th>Descobertos</th><th>Processados</th><th>Descartados</th></tr></thead>
+								<tbody>
+									<?php foreach ( $stats['cities'] as $c_name => $c ) : ?>
+										<tr>
+											<td><?php echo esc_html( (string) $c_name ); ?></td>
+											<td><?php echo esc_html( (string) $c['queued'] ); ?></td>
+											<td><?php echo esc_html( (string) $c['processed'] ); ?></td>
+											<td><?php echo esc_html( (string) ( $c['skipped'] + $c['error'] ) ); ?></td>
+										</tr>
+									<?php endforeach; ?>
+								</tbody>
+							</table>
+						</div>
+					<?php endif; ?>
+					<?php if ( ! empty( $stats['reasons'] ) ) : ?>
+						<div class="card" style="margin:0;padding:16px 20px;max-width:none;">
+							<h3 style="margin-top:0;">Motivos de descarte</h3>
+							<table class="widefat striped">
+								<tbody>
+									<?php foreach ( $stats['reasons'] as $r_key => $r_total ) : ?>
+										<tr>
+											<td><?php echo esc_html( $reason_labels[ $r_key ] ?? (string) $r_key ); ?></td>
+											<td style="width:80px;text-align:right;"><?php echo esc_html( (string) $r_total ); ?></td>
+										</tr>
+									<?php endforeach; ?>
+								</tbody>
+							</table>
+						</div>
+					<?php endif; ?>
+				</div>
+			<?php endif; ?>
 
 			<!-- Ações e Fila de Moderação -->
 			<div class="card" style="padding:22px;margin-bottom:24px;max-width:none;">
@@ -235,7 +300,7 @@ class TF_Harvester_Admin {
 					<div>
 						<h2 style="margin:0 0 6px;">Alimentador Google Places &amp; Moderação</h2>
 						<p style="margin:0;color:#64748B;">
-							O alimentador busca novos locais no Google Maps e atualiza estabelecimentos já cadastrados se encontrar dados mais recentes (telefone, notas, avaliações e horários).
+							<strong>Como funciona:</strong> (1) o alimentador <em>descobre</em> locais no Google Maps por categoria e região; (2) depois <em>detalha</em> cada um (endereço, telefone, site, horários, nota) e o envia para a Fila de Moderação, ou atualiza o cadastro existente. No automático, isso é distribuído ao longo do dia.
 						</p>
 					</div>
 					<div style="display:flex;gap:12px;flex-wrap:wrap;">
@@ -244,7 +309,7 @@ class TF_Harvester_Admin {
 							<input type="hidden" name="tf_is_network" value="<?php echo esc_attr( $is_network ); ?>" />
 							<input type="hidden" name="tf_batch_type" value="google_process" />
 							<button type="submit" class="button button-secondary" <?php disabled( ! $has_key ); ?>>
-								▶ Processar Próximo Lote (15 locais)
+								▶ Detalhar e Enviar à Moderação (15 por cidade)
 							</button>
 						</form>
 						<form method="post" style="display:inline;">
@@ -252,7 +317,7 @@ class TF_Harvester_Admin {
 							<input type="hidden" name="tf_is_network" value="<?php echo esc_attr( $is_network ); ?>" />
 							<input type="hidden" name="tf_batch_type" value="google_scan" />
 							<button type="submit" class="button button-secondary" <?php disabled( ! $has_key ); ?>>
-								🔍 Buscar Mais no Google Places
+								🔍 Descobrir Novos Locais no Google
 							</button>
 						</form>
 						<a class="button button-primary button-hero" href="<?php echo esc_url( admin_url( 'admin.php?page=tf-approval-queue' ) ); ?>" style="line-height:2.1;">
@@ -289,14 +354,14 @@ class TF_Harvester_Admin {
 							<tr>
 								<th scope="row">Varredura automática</th>
 								<td>
-									<label><input type="checkbox" name="tf_places_enabled" value="1" <?php checked( (bool) get_site_option( 'tf_places_enabled', false ) ); ?> /> Rodar de hora em hora via WP-Cron</label>
+									<label><input type="checkbox" name="tf_places_enabled" value="1" <?php checked( (bool) get_site_option( 'tf_places_enabled', false ) ); ?> /> Rodar automaticamente (a cada 15 minutos, distribuindo a meta diária ao longo do dia)</label>
 								</td>
 							</tr>
 							<tr>
 								<th scope="row"><label for="tf_places_daily_target">Meta diária (rede)</label></th>
 								<td>
 									<input type="number" min="10" max="1000" id="tf_places_daily_target" name="tf_places_daily_target" value="<?php echo esc_attr( (string) TF_Google_Places::get_daily_target() ); ?>" class="small-text" /> locais processados por dia
-									<p class="description">Cada local processado consome 1 chamada Place Details; cada página de busca consome 1 chamada Text Search.</p>
+									<p class="description">Total de locais detalhados por dia em toda a rede, divididos igualmente entre as cidades e espalhados em rodadas de 15 minutos (ex.: 300/dia ≈ 3 a 4 por rodada). Cada local detalhado = 1 chamada <em>Place Details</em> (faixa Enterprise, paga após a cota gratuita mensal do Google). As buscas de descoberta usam a faixa mais barata (<em>IDs Only</em>). Locais já cadastrados são reverificados a cada 30 dias.</p>
 								</td>
 							</tr>
 						</table>

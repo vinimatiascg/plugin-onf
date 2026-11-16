@@ -2,14 +2,17 @@
 /**
  * Alimentador de Estabelecimentos via Google Maps / Google Places API (New).
  *
- * Substitui a varredura baseada em OpenStreetMap por uma varredura nativa em PHP:
- *  1. Busca (Text Search) categorias × cidade dentro do retângulo geográfico de cada subsite;
- *  2. Enfileira os place_id encontrados em uma tabela própria por subsite;
- *  3. Processa a fila com Place Details, deduplica (place_id, nome, telefone, proximidade)
- *     e cria rascunhos "pendentes" para moderação ou atualiza registros já existentes.
+ * Varredura nativa em PHP, em duas etapas:
+ *  1. DESCOBERTA (Text Search "IDs Only"): cada consulta do catálogo é executada em cada
+ *     célula de uma grade 3×3 sobre a cidade (até 3 páginas de 20 resultados por célula),
+ *     enfileirando apenas os place_id numa tabela própria por subsite;
+ *  2. DETALHAMENTO (Place Details): a fila é processada aos poucos, deduplicada
+ *     (place_id, nome, telefone, proximidade) e vira rascunho "pendente" na Fila de
+ *     Moderação, ou atualiza o registro já existente.
  *
- * Roda automaticamente via WP-Cron (de hora em hora, no site principal da rede)
- * e também pode ser disparado manualmente no painel "⚡ Alimentador".
+ * O WP-Cron roda a cada 15 minutos e distribui a meta diária de detalhamentos de forma
+ * uniforme ao longo do dia (sem picos), descobrindo novos locais só quando a fila baixa.
+ * Locais já processados são reverificados a cada 30 dias para manter notas e horários em dia.
  *
  * Chave da API: constante TF_GOOGLE_PLACES_API_KEY no wp-config.php (recomendado)
  * ou campo no painel do Alimentador (opção de rede tf_google_places_api_key).
@@ -35,9 +38,39 @@ class TF_Google_Places {
 	 */
 	const BBOX_DELTA = 0.085;
 
+	/** Grade de busca (N×N células) sobre o retângulo da cidade, para ir além do limite de 60 resultados por consulta. */
+	const GRID_SIZE = 3;
+
+	/** Intervalo do cron. */
+	const CRON_SCHEDULE = 'tf_places_15min';
+	const TICK_SECONDS  = 900;
+
+	/** Quantos locais descobertos manter na fila de cada cidade antes de buscar mais. */
+	const QUEUE_BUFFER = 80;
+
+	/** Dias para reverificar um local já processado. */
+	const REFRESH_DAYS = 30;
+
+	/** Limite diário de páginas de busca por cidade (proteção contra uso excessivo). */
+	const DAILY_SEARCH_CAP = 300;
+
 	public static function init(): void {
+		add_filter( 'cron_schedules', array( __CLASS__, 'add_cron_schedule' ) );
 		add_action( self::CRON_HOOK, array( __CLASS__, 'run_cron_tick' ) );
 		add_action( 'init', array( __CLASS__, 'maybe_schedule_cron' ), 30 );
+	}
+
+	/**
+	 * @param array $schedules Intervalos do WP-Cron.
+	 * @return array
+	 */
+	public static function add_cron_schedule( $schedules ): array {
+		$schedules = (array) $schedules;
+		$schedules[ self::CRON_SCHEDULE ] = array(
+			'interval' => self::TICK_SECONDS,
+			'display'  => 'A cada 15 minutos (Alimentador Google Places)',
+		);
+		return $schedules;
 	}
 
 	/* ---------------------------------------------------------------------
@@ -71,8 +104,13 @@ class TF_Google_Places {
 			return;
 		}
 		$scheduled = wp_next_scheduled( self::CRON_HOOK );
+		// Migra o agendamento antigo (de hora em hora) para o intervalo de 15 minutos.
+		if ( $scheduled && self::CRON_SCHEDULE !== wp_get_schedule( self::CRON_HOOK ) ) {
+			wp_clear_scheduled_hook( self::CRON_HOOK );
+			$scheduled = false;
+		}
 		if ( self::is_enabled() && ! $scheduled ) {
-			wp_schedule_event( time() + 300, 'hourly', self::CRON_HOOK );
+			wp_schedule_event( time() + 60, self::CRON_SCHEDULE, self::CRON_HOOK );
 		} elseif ( ! self::is_enabled() && $scheduled ) {
 			wp_clear_scheduled_hook( self::CRON_HOOK );
 		}
@@ -99,12 +137,19 @@ class TF_Google_Places {
 			array( 'post_type' => 'restaurante', 'query' => 'restaurante japonês', 'type' => 'restaurant', 'terms' => array( 'tipo_cozinha' => array( 'Asiática / Japonesa' ) ) ),
 			array( 'post_type' => 'restaurante', 'query' => 'cafeteria confeitaria', 'type' => 'cafe', 'terms' => array( 'categoria_restaurante' => array( 'Cafeteria & Confeitaria' ) ) ),
 			array( 'post_type' => 'restaurante', 'query' => 'bar pub', 'type' => 'bar', 'terms' => array( 'categoria_restaurante' => array( 'Bar & Pub' ) ) ),
+			array( 'post_type' => 'restaurante', 'query' => 'pizzaria', 'type' => 'pizza_restaurant', 'terms' => array( 'tipo_cozinha' => array( 'Italiana / Massas' ) ) ),
+			array( 'post_type' => 'restaurante', 'query' => 'hamburgueria lanchonete', 'type' => 'hamburger_restaurant', 'terms' => array( 'categoria_restaurante' => array( 'Restaurante Familiar' ) ) ),
+			array( 'post_type' => 'restaurante', 'query' => 'peixaria restaurante de peixe', 'type' => 'seafood_restaurant', 'terms' => array( 'tipo_cozinha' => array( 'Peixes de Rio (Dourado / Surubim)' ) ) ),
+			array( 'post_type' => 'restaurante', 'query' => 'padaria', 'type' => 'bakery', 'terms' => array( 'categoria_restaurante' => array( 'Cafeteria & Confeitaria' ) ) ),
+			array( 'post_type' => 'restaurante', 'query' => 'sorveteria', 'type' => 'ice_cream_shop', 'terms' => array( 'categoria_restaurante' => array( 'Cafeteria & Confeitaria' ) ) ),
+			array( 'post_type' => 'restaurante', 'query' => 'restaurante alta gastronomia', 'type' => 'fine_dining_restaurant', 'terms' => array( 'categoria_restaurante' => array( 'Alta Gastronomia' ) ) ),
 
 			// Hotéis
 			array( 'post_type' => 'hotel', 'query' => 'hotéis', 'type' => 'hotel', 'terms' => array( 'categoria_hotel' => array( 'Hotel Urbano' ) ) ),
 			array( 'post_type' => 'hotel', 'query' => 'resort', 'type' => 'resort_hotel', 'terms' => array( 'categoria_hotel' => array( 'Resort' ) ) ),
 			array( 'post_type' => 'hotel', 'query' => 'pousada', 'type' => 'lodging', 'terms' => array( 'categoria_hotel' => array( 'Pousada' ) ) ),
 			array( 'post_type' => 'hotel', 'query' => 'hostel', 'type' => 'hostel', 'terms' => array( 'categoria_hotel' => array( 'Hostel' ) ) ),
+			array( 'post_type' => 'hotel', 'query' => 'hospedagem flat apart hotel', 'type' => 'lodging', 'terms' => array() ),
 
 			// Lojas / Compras
 			array( 'post_type' => 'loja', 'query' => 'shopping center galeria', 'type' => 'shopping_mall', 'terms' => array( 'categoria_loja' => array( 'Shopping Center / Galeria' ) ) ),
@@ -115,6 +160,9 @@ class TF_Google_Places {
 			array( 'post_type' => 'loja', 'query' => 'loja de roupas calçados esportes', 'type' => 'clothing_store', 'terms' => array( 'categoria_loja' => array( 'Moda, Calçados e Esportes' ) ) ),
 			array( 'post_type' => 'loja', 'query' => 'loja de departamentos importados', 'type' => 'department_store', 'terms' => array( 'categoria_loja' => array( 'Loja de Departamentos / Importados' ) ) ),
 			array( 'post_type' => 'loja', 'query' => 'artesanato souvenirs', 'type' => 'gift_shop', 'terms' => array( 'categoria_loja' => array( 'Artesanato e Souvenirs' ) ) ),
+			array( 'post_type' => 'loja', 'query' => 'loja de celulares', 'type' => 'cell_phone_store', 'terms' => array( 'categoria_loja' => array( 'Eletrônicos e Informática' ) ) ),
+			array( 'post_type' => 'loja', 'query' => 'loja de brinquedos', 'type' => 'toy_store', 'terms' => array( 'categoria_loja' => array( 'Loja de Departamentos / Importados' ) ) ),
+			array( 'post_type' => 'loja', 'query' => 'supermercado', 'type' => 'supermarket', 'terms' => array( 'categoria_loja' => array( 'Loja de Departamentos / Importados' ) ) ),
 
 			// Atrativos
 			array( 'post_type' => 'atrativo', 'query' => 'pontos turísticos', 'type' => 'tourist_attraction', 'terms' => array() ),
@@ -122,6 +170,8 @@ class TF_Google_Places {
 			array( 'post_type' => 'atrativo', 'query' => 'museu', 'type' => 'museum', 'terms' => array( 'categoria_atrativo' => array( 'Parques Temáticos e Museus' ) ) ),
 			array( 'post_type' => 'atrativo', 'query' => 'templo mesquita igreja histórica', 'type' => '', 'terms' => array( 'categoria_atrativo' => array( 'Templos Religiosos e Cultura' ) ) ),
 			array( 'post_type' => 'atrativo', 'query' => 'marco das três fronteiras monumento histórico', 'type' => '', 'terms' => array( 'categoria_atrativo' => array( 'Marcos Fronteiriços e Históricos' ) ) ),
+			array( 'post_type' => 'atrativo', 'query' => 'parque temático aquário zoológico', 'type' => '', 'terms' => array( 'categoria_atrativo' => array( 'Parques Temáticos e Museus' ) ) ),
+			array( 'post_type' => 'atrativo', 'query' => 'mirante cachoeira trilha', 'type' => '', 'terms' => array( 'categoria_atrativo' => array( 'Natureza e Parques Nacionais' ) ) ),
 
 			// Passeios
 			array( 'post_type' => 'passeio', 'query' => 'passeios turísticos tours', 'type' => 'tour_agency', 'terms' => array() ),
@@ -132,6 +182,9 @@ class TF_Google_Places {
 			array( 'post_type' => 'servico', 'query' => 'casa de câmbio', 'type' => '', 'terms' => array( 'tipo_servico' => array( 'Casa de Câmbio' ) ) ),
 			array( 'post_type' => 'servico', 'query' => 'agência de turismo receptivo', 'type' => 'travel_agency', 'terms' => array( 'tipo_servico' => array( 'Agência de Turismo e Receptivo' ) ) ),
 			array( 'post_type' => 'servico', 'query' => 'locadora de veículos', 'type' => 'car_rental', 'terms' => array( 'tipo_servico' => array( 'Locadora de Veículos' ) ) ),
+			array( 'post_type' => 'servico', 'query' => 'farmácia', 'type' => 'pharmacy', 'terms' => array( 'tipo_servico' => array( 'Farmácia' ) ) ),
+			array( 'post_type' => 'servico', 'query' => 'hospital clínica pronto atendimento', 'type' => '', 'terms' => array( 'tipo_servico' => array( 'Saúde e Hospitais' ) ) ),
+			array( 'post_type' => 'servico', 'query' => 'táxi transporte por aplicativo ponto de táxi', 'type' => '', 'terms' => array( 'tipo_servico' => array( 'Transporte e Táxi' ) ) ),
 		);
 
 		/**
@@ -183,24 +236,58 @@ class TF_Google_Places {
 	/**
 	 * Conta itens na fila de todos os subsites da rede.
 	 *
-	 * @return array{queued:int, processed:int, skipped:int, error:int}
+	 * @return array{queued:int, processed:int, skipped:int, error:int, created:int, reasons:array, cities:array}
 	 */
 	public static function get_queue_stats(): array {
-		$stats = array( 'queued' => 0, 'processed' => 0, 'skipped' => 0, 'error' => 0 );
+		$stats = array( 'queued' => 0, 'processed' => 0, 'skipped' => 0, 'error' => 0, 'created' => 0, 'reasons' => array(), 'cities' => array() );
 		self::for_each_city_site(
-			function () use ( &$stats ) {
+			function ( array $city ) use ( &$stats ) {
 				global $wpdb;
 				$table = self::table_name();
+				$per   = array( 'queued' => 0, 'processed' => 0, 'skipped' => 0, 'error' => 0 );
 				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 				$rows = $wpdb->get_results( "SELECT status, COUNT(*) AS total FROM {$table} GROUP BY status", ARRAY_A );
 				foreach ( (array) $rows as $row ) {
-					if ( isset( $stats[ $row['status'] ] ) ) {
+					if ( isset( $per[ $row['status'] ] ) ) {
+						$per[ $row['status'] ]    = (int) $row['total'];
 						$stats[ $row['status'] ] += (int) $row['total'];
 					}
 				}
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				$stats['created'] += (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table} WHERE note = 'criado'" );
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				$notes = $wpdb->get_results( "SELECT note, COUNT(*) AS total FROM {$table} WHERE status IN ('skipped','error') GROUP BY note", ARRAY_A );
+				foreach ( (array) $notes as $n ) {
+					$key = preg_replace( '/_\d+$/', '', (string) $n['note'] );
+					$stats['reasons'][ $key ] = ( $stats['reasons'][ $key ] ?? 0 ) + (int) $n['total'];
+				}
+				$stats['cities'][ $city['name'] ] = $per;
 			}
 		);
 		return $stats;
+	}
+
+	/**
+	 * Uso do dia (detalhamentos feitos e páginas de busca), zerado à meia-noite (fuso do site).
+	 *
+	 * @return array{date:string, details:int, searches:array}
+	 */
+	public static function get_daily_usage(): array {
+		$today = wp_date( 'Y-m-d' );
+		$usage = get_site_option( 'tf_places_daily_usage', array() );
+		if ( ! is_array( $usage ) || ( $usage['date'] ?? '' ) !== $today ) {
+			$usage = array( 'date' => $today, 'details' => 0, 'searches' => array() );
+		}
+		return $usage;
+	}
+
+	private static function add_daily_usage( int $details, string $city_slug = '', int $searches = 0 ): void {
+		$usage             = self::get_daily_usage();
+		$usage['details'] += $details;
+		if ( '' !== $city_slug && $searches > 0 ) {
+			$usage['searches'][ $city_slug ] = (int) ( $usage['searches'][ $city_slug ] ?? 0 ) + $searches;
+		}
+		update_site_option( 'tf_places_daily_usage', $usage );
 	}
 
 	/* ---------------------------------------------------------------------
@@ -208,31 +295,48 @@ class TF_Google_Places {
 	 * ------------------------------------------------------------------ */
 
 	/**
-	 * Tick do WP-Cron: distribui a meta diária entre as horas do dia e as cidades.
+	 * Tick do WP-Cron (a cada 15 min): divide o que falta da meta diária pelos ticks restantes
+	 * até a meia-noite, repartindo entre as cidades. Assim a meta é cumprida de forma uniforme,
+	 * sem rajadas, e um atraso do cron é compensado automaticamente nos ticks seguintes.
 	 */
 	public static function run_cron_tick(): void {
 		if ( ! self::is_enabled() ) {
 			return;
 		}
-		$cities   = max( 1, count( self::get_city_site_ids() ) );
-		$per_tick = (int) max( 1, ceil( self::get_daily_target() / 24 / $cities ) );
-		self::run_network( 1, $per_tick );
+		$budget = self::tick_budget();
+		self::run_network( -1, 0, $budget );
+	}
+
+	/**
+	 * Quantos detalhamentos este tick pode fazer.
+	 */
+	public static function tick_budget(): int {
+		$remaining = max( 0, self::get_daily_target() - self::get_daily_usage()['details'] );
+		if ( 0 === $remaining ) {
+			return 0;
+		}
+		$midnight   = ( new DateTimeImmutable( 'tomorrow', wp_timezone() ) )->getTimestamp();
+		$ticks_left = max( 1, (int) ceil( ( $midnight - time() ) / self::TICK_SECONDS ) );
+		return (int) ceil( $remaining / $ticks_left );
 	}
 
 	/**
 	 * Executa uma rodada em todos os subsites de cidade.
 	 *
-	 * @param int $search_queries Quantas consultas (páginas de resultados) buscar por cidade.
-	 * @param int $process_batch  Quantos locais da fila processar por cidade.
+	 * @param int $search_queries Páginas de busca por cidade; -1 = automático (só busca se a fila da cidade estiver baixa).
+	 * @param int $process_batch  Locais a detalhar por cidade (ignorado se $total_budget > 0).
+	 * @param int $total_budget   Total de detalhamentos na rodada, repartido entre as cidades.
 	 * @return array Resumo da rodada.
 	 */
-	public static function run_network( int $search_queries, int $process_batch ): array {
+	public static function run_network( int $search_queries, int $process_batch, int $total_budget = 0 ): array {
 		$summary = array(
 			'started_at' => current_time( 'mysql' ),
+			'mode'       => $total_budget > 0 || $search_queries < 0 ? 'auto' : 'manual',
 			'found'      => 0,
 			'created'    => 0,
 			'updated'    => 0,
 			'skipped'    => 0,
+			'refreshed'  => 0,
 			'errors'     => array(),
 		);
 
@@ -248,20 +352,45 @@ class TF_Google_Places {
 		}
 		set_site_transient( self::LOCK_KEY, 1, 10 * MINUTE_IN_SECONDS );
 
+		$city_ids = self::get_city_site_ids();
+		$n_cities = max( 1, count( $city_ids ) );
+		$position = 0;
+
 		try {
 			self::for_each_city_site(
-				function ( array $city ) use ( $search_queries, $process_batch, &$summary ) {
-					for ( $i = 0; $i < $search_queries; $i++ ) {
+				function ( array $city ) use ( $search_queries, $process_batch, $total_budget, $n_cities, &$position, &$summary ) {
+					// Fatia do orçamento desta cidade (o resto da divisão vai para as primeiras).
+					$batch = $process_batch;
+					if ( $total_budget > 0 ) {
+						$batch = intdiv( $total_budget, $n_cities ) + ( $position < $total_budget % $n_cities ? 1 : 0 );
+					}
+					$position++;
+
+					// Descoberta: no modo automático, só busca quando a fila da cidade está baixa.
+					$searches = $search_queries;
+					if ( $search_queries < 0 ) {
+						$searches  = self::count_queued() < self::QUEUE_BUFFER ? 1 : 0;
+						$used      = (int) ( self::get_daily_usage()['searches'][ $city['slug'] ] ?? 0 );
+						$searches  = $used >= self::DAILY_SEARCH_CAP ? 0 : $searches;
+					}
+					for ( $i = 0; $i < $searches; $i++ ) {
 						$res = self::scan_next_query( $city );
 						if ( is_wp_error( $res ) ) {
 							$summary['errors'][] = $city['name'] . ': ' . $res->get_error_message();
 							break;
 						}
+						self::add_daily_usage( 0, $city['slug'], 1 );
 						$summary['found'] += $res;
 					}
 
-					if ( $process_batch > 0 ) {
-						$res = self::process_queue( $city, $process_batch );
+					// Fila vazia e catálogo sem novidades: reverifica locais antigos.
+					if ( $batch > 0 && 0 === self::count_queued() ) {
+						$summary['refreshed'] += self::requeue_stale( $batch );
+					}
+
+					if ( $batch > 0 ) {
+						$res = self::process_queue( $city, $batch );
+						self::add_daily_usage( $res['calls'] );
 						foreach ( array( 'created', 'updated', 'skipped' ) as $k ) {
 							$summary[ $k ] += $res[ $k ];
 						}
@@ -322,8 +451,56 @@ class TF_Google_Places {
 		}
 	}
 
+	/**
+	 * Locais descobertos aguardando detalhamento no subsite atual.
+	 */
+	public static function count_queued(): int {
+		global $wpdb;
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		return (int) $wpdb->get_var( 'SELECT COUNT(*) FROM ' . self::table_name() . " WHERE status = 'queued'" );
+	}
+
+	/**
+	 * Recoloca na fila locais processados há mais de REFRESH_DAYS dias (nota, horários, telefone).
+	 */
+	public static function requeue_stale( int $limit ): int {
+		global $wpdb;
+		$limit  = max( 1, $limit );
+		$cutoff = wp_date( 'Y-m-d H:i:s', time() - self::REFRESH_DAYS * DAY_IN_SECONDS );
+		return (int) $wpdb->query(
+			$wpdb->prepare(
+				// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				'UPDATE ' . self::table_name() . " SET status = 'queued', note = 'reverificacao' WHERE status = 'processed' AND post_id > 0 AND updated_at < %s ORDER BY updated_at ASC LIMIT %d",
+				$cutoff,
+				$limit
+			)
+		);
+	}
+
+	/**
+	 * Células da grade de busca sobre a cidade.
+	 *
+	 * @return array<int, array{low:array, high:array}>
+	 */
+	public static function get_grid_cells( array $city ): array {
+		$n     = max( 1, self::GRID_SIZE );
+		$step  = ( 2 * self::BBOX_DELTA ) / $n;
+		$lat0  = (float) $city['lat'] - self::BBOX_DELTA;
+		$lng0  = (float) $city['lng'] - self::BBOX_DELTA;
+		$cells = array();
+		for ( $i = 0; $i < $n; $i++ ) {
+			for ( $j = 0; $j < $n; $j++ ) {
+				$cells[] = array(
+					'low'  => array( 'latitude' => round( $lat0 + $i * $step, 6 ), 'longitude' => round( $lng0 + $j * $step, 6 ) ),
+					'high' => array( 'latitude' => round( $lat0 + ( $i + 1 ) * $step, 6 ), 'longitude' => round( $lng0 + ( $j + 1 ) * $step, 6 ) ),
+				);
+			}
+		}
+		return $cells;
+	}
+
 	/* ---------------------------------------------------------------------
-	 * Etapa 1: varredura (Text Search)
+	 * Etapa 1: descoberta (Text Search — IDs Only)
 	 * ------------------------------------------------------------------ */
 
 	/**
@@ -338,8 +515,11 @@ class TF_Google_Places {
 			return 0;
 		}
 
-		$state = get_option( 'tf_places_scan_state', array( 'index' => 0, 'page_token' => '', 'page' => 0 ) );
+		$cells = self::get_grid_cells( $city );
+		$state = get_option( 'tf_places_scan_state', array() );
+		$state = is_array( $state ) ? $state : array();
 		$index = (int) ( $state['index'] ?? 0 ) % count( $catalog );
+		$cell  = (int) ( $state['cell'] ?? 0 ) % count( $cells );
 		$entry = $catalog[ $index ];
 
 		$body = array(
@@ -348,10 +528,7 @@ class TF_Google_Places {
 			'regionCode'         => strtolower( $city['country'] ),
 			'pageSize'           => 20,
 			'locationRestriction' => array(
-				'rectangle' => array(
-					'low'  => array( 'latitude' => $city['lat'] - self::BBOX_DELTA, 'longitude' => $city['lng'] - self::BBOX_DELTA ),
-					'high' => array( 'latitude' => $city['lat'] + self::BBOX_DELTA, 'longitude' => $city['lng'] + self::BBOX_DELTA ),
-				),
+				'rectangle' => $cells[ $cell ],
 			),
 		);
 		if ( ! empty( $entry['type'] ) ) {
@@ -362,12 +539,9 @@ class TF_Google_Places {
 			$body['pageToken'] = $state['page_token'];
 		}
 
-		$res = self::request(
-			'POST',
-			'places:searchText',
-			'places.id,places.displayName,places.businessStatus,nextPageToken',
-			$body
-		);
+		// Somente IDs: faixa "Text Search Essentials (IDs Only)", a mais barata da API.
+		// Nome, status e demais dados vêm depois no Place Details.
+		$res = self::request( 'POST', 'places:searchText', 'places.id,nextPageToken', $body );
 		if ( is_wp_error( $res ) ) {
 			return $res;
 		}
@@ -376,7 +550,7 @@ class TF_Google_Places {
 		global $wpdb;
 		$now = current_time( 'mysql' );
 		foreach ( (array) ( $res['places'] ?? array() ) as $place ) {
-			if ( empty( $place['id'] ) || 'CLOSED_PERMANENTLY' === ( $place['businessStatus'] ?? '' ) ) {
+			if ( empty( $place['id'] ) ) {
 				continue;
 			}
 			$inserted = $wpdb->query(
@@ -395,13 +569,17 @@ class TF_Google_Places {
 			$added += (int) $inserted;
 		}
 
-		// Avança o cursor: próxima página da mesma consulta (até 3 páginas) ou próxima consulta.
+		// Avança o cursor: próxima página (até 3) → próxima célula da grade → próxima consulta.
 		$next_token = (string) ( $res['nextPageToken'] ?? '' );
 		$page       = (int) ( $state['page'] ?? 0 ) + 1;
+		$cycles     = (int) ( $state['cycles'] ?? 0 );
 		if ( '' !== $next_token && $page < 3 ) {
-			$state = array( 'index' => $index, 'page_token' => $next_token, 'page' => $page );
+			$state = array( 'index' => $index, 'cell' => $cell, 'page_token' => $next_token, 'page' => $page, 'cycles' => $cycles );
+		} elseif ( $cell + 1 < count( $cells ) ) {
+			$state = array( 'index' => $index, 'cell' => $cell + 1, 'page_token' => '', 'page' => 0, 'cycles' => $cycles );
 		} else {
-			$state = array( 'index' => ( $index + 1 ) % count( $catalog ), 'page_token' => '', 'page' => 0 );
+			$next  = ( $index + 1 ) % count( $catalog );
+			$state = array( 'index' => $next, 'cell' => 0, 'page_token' => '', 'page' => 0, 'cycles' => 0 === $next ? $cycles + 1 : $cycles );
 		}
 		update_option( 'tf_places_scan_state', $state, false );
 
@@ -415,11 +593,11 @@ class TF_Google_Places {
 	/**
 	 * @param array $city  Contexto da cidade.
 	 * @param int   $limit Quantidade máxima de locais.
-	 * @return array{created:int, updated:int, skipped:int, errors:array}
+	 * @return array{created:int, updated:int, skipped:int, calls:int, errors:array}
 	 */
 	public static function process_queue( array $city, int $limit ): array {
 		global $wpdb;
-		$out   = array( 'created' => 0, 'updated' => 0, 'skipped' => 0, 'errors' => array() );
+		$out   = array( 'created' => 0, 'updated' => 0, 'skipped' => 0, 'calls' => 0, 'errors' => array() );
 		$table = self::table_name();
 		$rows  = $wpdb->get_results(
 			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
@@ -435,6 +613,7 @@ class TF_Google_Places {
 				null,
 				array( 'languageCode' => 'pt-BR', 'regionCode' => strtolower( $city['country'] ) )
 			);
+			$out['calls']++;
 
 			if ( is_wp_error( $details ) ) {
 				// Local removido do Google: marca como erro e segue para o próximo.

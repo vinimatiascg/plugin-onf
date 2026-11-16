@@ -34,8 +34,8 @@ Em **⚡ Alimentador Rede** (painel da rede):
   define( 'TF_GOOGLE_PLACES_API_KEY', 'sua-chave' );
   ```
   Ative a *Places API (New)* no Google Cloud e restrinja a chave a essa API.
-- **Varredura automática:** roda de hora em hora pelo WP-Cron do site principal.
-- **Meta diária:** total de locais processados por dia na rede (padrão 100).
+- **Varredura automática:** roda a cada 15 minutos pelo WP-Cron do site principal.
+- **Meta diária:** total de locais detalhados por dia na rede (padrão 100). A cada rodada o plugin divide o que falta da meta pelas rodadas restantes até a meia-noite e reparte entre as cidades — distribuição uniforme, sem rajadas.
 
 Os botões *Buscar Mais no Google Places* e *Processar Próximo Lote* executam uma rodada na hora.
 
@@ -59,3 +59,13 @@ O plugin verifica sozinho se há versão nova no GitHub (`vinimatiascg/plugin-on
 **Para publicar uma atualização:** altere o código, aumente a versão em `tf-core.php` (cabeçalho `Version:` e `TF_CORE_VERSION`) e faça push na `main`.
 
 **Repositório privado:** defina um token *Fine-grained* (Contents: Read-only) em `define( 'TF_CORE_GITHUB_TOKEN', '...' );` no `wp-config.php`, na variável de ambiente `TF_CORE_GITHUB_TOKEN` ou no campo da página.
+
+## Otimizações da varredura (v1.4.0)
+
+- **Duas etapas visíveis no painel:** *Descobertos no Google* (só o ID, aguardando detalhamento) e *Na Fila de Moderação* (rascunhos pendentes). Um local só aparece na moderação depois de detalhado.
+- **Cobertura maior:** cada consulta roda numa **grade 3×3** sobre a cidade (até 60 resultados por célula, em vez de 60 por cidade) e o catálogo ganhou novas categorias (pizzarias, hamburguerias, peixarias, padarias, sorveterias, alta gastronomia, apart-hotéis, celulares, brinquedos, supermercados, parques temáticos, mirantes, farmácias, saúde, táxi).
+- **Busca mais barata:** a descoberta pede só `places.id` (faixa *Text Search Essentials — IDs Only*); os dados completos vêm no Place Details.
+- **Ritmo controlado:** cron de 15 min, meta diária distribuída, nova descoberta só quando a fila da cidade baixa de 80 itens, teto de 300 páginas de busca por cidade/dia.
+- **Reverificação:** quando não há locais novos, os já processados há mais de 30 dias voltam para a fila (nota, avaliações, horários e telefone atualizados).
+- **Painel:** progresso do dia, próxima rodada, números por cidade e motivos de descarte.
+- **Desempenho:** contador da Fila de Aprovação com cache de 2 minutos (antes percorria todos os sites a cada tela do admin).

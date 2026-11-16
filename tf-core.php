@@ -3,7 +3,7 @@
  * Plugin Name: Onde na Fronteira — Core Network Plugin (tf-core)
  * Plugin URI:  https://ondenafronteira.com.br
  * Description: Arquitetura central da rede Onde na Fronteira: Custom Post Types, Taxonomias, Metacampos REST, Deduplicação, Ingestão IA, Schema.org JSON-LD, SEO Técnico, GEO (llms.txt), Google News Sitemap, Social Discovery e Alimentador Google Maps / Google Places.
- * Version:     1.3.1
+ * Version:     1.4.0
  * Author:      Hermes Agent
  * Author URI:  https://ondenafronteira.com.br
  * License:     GPL-2.0+
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'TF_CORE_VERSION', '1.3.1' );
+define( 'TF_CORE_VERSION', '1.4.0' );
 define( 'TF_CORE_PATH', plugin_dir_path( __FILE__ ) );
 define( 'TF_CORE_URL', plugin_dir_url( __FILE__ ) );
 
