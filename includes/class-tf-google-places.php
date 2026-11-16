@@ -748,6 +748,8 @@ class TF_Google_Places {
 				'X-Goog-Api-Key'   => self::get_api_key(),
 				'X-Goog-FieldMask' => $field_mask,
 				'Content-Type'     => 'application/json',
+				// Permite chaves com restrição de "Sites" (referenciadores HTTP) configuradas com o domínio do portal.
+				'Referer'          => home_url( '/' ),
 			),
 		);
 		if ( null !== $body ) {
@@ -767,6 +769,14 @@ class TF_Google_Places {
 		}
 
 		$message = is_array( $data ) && isset( $data['error']['message'] ) ? (string) $data['error']['message'] : 'HTTP ' . $code;
+		$reason  = self::extract_error_reason( is_array( $data ) ? $data : array() );
+		if ( '' !== $reason ) {
+			$message .= ' [' . $reason . ']';
+			$hint     = self::reason_hint( $reason );
+			if ( '' !== $hint ) {
+				$message .= ' → ' . $hint;
+			}
+		}
 		if ( 404 === $code ) {
 			return new WP_Error( 'tf_places_not_found', 'Local não encontrado no Google: ' . $message );
 		}
@@ -777,6 +787,36 @@ class TF_Google_Places {
 			return new WP_Error( 'tf_places_quota', 'Cota da Google Places API excedida: ' . $message );
 		}
 		return new WP_Error( 'tf_places_api', 'Google Places API (' . $code . '): ' . $message );
+	}
+	/**
+	 * Extrai o motivo técnico (ErrorInfo.reason) da resposta de erro do Google.
+	 */
+	private static function extract_error_reason( array $data ): string {
+		foreach ( (array) ( $data['error']['details'] ?? array() ) as $detail ) {
+			if ( is_array( $detail ) && ! empty( $detail['reason'] ) ) {
+				return (string) $detail['reason'];
+			}
+		}
+		return (string) ( $data['error']['status'] ?? '' );
+	}
+
+	/**
+	 * Explicação em português para os motivos de recusa mais comuns.
+	 */
+	private static function reason_hint( string $reason ): string {
+		$hints = array(
+			'API_KEY_HTTP_REFERRER_BLOCKED' => 'A chave tem restrição de "Sites" (referenciadores HTTP) e o domínio ' . wp_parse_url( home_url(), PHP_URL_HOST ) . ' não está na lista. Adicione "' . wp_parse_url( home_url(), PHP_URL_HOST ) . '/*" e "*.' . wp_parse_url( home_url(), PHP_URL_HOST ) . '/*", ou troque a restrição para "Endereços IP" com o IP do servidor.',
+			'API_KEY_IP_ADDRESS_BLOCKED'    => 'A chave tem restrição de "Endereços IP" e o IP de saída do servidor não está na lista.',
+			'API_KEY_SERVICE_BLOCKED'       => 'Em "Restrições de API" da chave, falta marcar a "Places API (New)" (a "Places API" antiga é outra API).',
+			'SERVICE_DISABLED'              => 'A "Places API (New)" não está ativada no projeto do Google Cloud desta chave. Ative em APIs e serviços > Biblioteca.',
+			'BILLING_DISABLED'              => 'O projeto do Google Cloud não tem faturamento ativo. Vincule uma conta de faturamento ao projeto.',
+			'API_KEY_INVALID'               => 'A chave é inválida ou foi apagada. Confira se copiou a chave inteira.',
+			'API_KEY_ANDROID_APP_BLOCKED'   => 'A chave está restrita a apps Android; use uma chave sem restrição de aplicativo ou restrita por IP/site.',
+			'API_KEY_IOS_APP_BLOCKED'       => 'A chave está restrita a apps iOS; use uma chave sem restrição de aplicativo ou restrita por IP/site.',
+			'RATE_LIMIT_EXCEEDED'           => 'Limite de requisições por minuto atingido; aguarde ou aumente a cota.',
+			'RESOURCE_EXHAUSTED'            => 'Cota diária esgotada; aumente a cota em APIs e serviços > Places API (New) > Cotas.',
+		);
+		return $hints[ $reason ] ?? '';
 	}
 }
 
