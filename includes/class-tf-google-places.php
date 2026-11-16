@@ -93,7 +93,7 @@ class TF_Google_Places {
 	}
 
 	public static function get_daily_target(): int {
-		return max( 10, (int) get_site_option( 'tf_places_daily_target', 100 ) );
+		return max( 1, (int) get_site_option( 'tf_places_daily_target', 32 ) );
 	}
 
 	/**
@@ -281,7 +281,46 @@ class TF_Google_Places {
 		return $usage;
 	}
 
+	/**
+	 * Limite mensal de detalhamentos (0 = sem limite). Padrão 1.000 = cota gratuita mensal
+	 * da faixa "Place Details Enterprise" do Google.
+	 */
+	public static function get_monthly_cap(): int {
+		return max( 0, (int) get_site_option( 'tf_places_monthly_cap', 1000 ) );
+	}
+
+	/**
+	 * Mês de cobrança do Google (a cota gratuita zera no dia 1º, à meia-noite do horário do Pacífico).
+	 */
+	private static function billing_month(): string {
+		return ( new DateTimeImmutable( 'now', new DateTimeZone( 'America/Los_Angeles' ) ) )->format( 'Y-m' );
+	}
+
+	/**
+	 * @return array{month:string, details:int}
+	 */
+	public static function get_monthly_usage(): array {
+		$usage = get_site_option( 'tf_places_monthly_usage', array() );
+		if ( ! is_array( $usage ) || ( $usage['month'] ?? '' ) !== self::billing_month() ) {
+			$usage = array( 'month' => self::billing_month(), 'details' => 0 );
+		}
+		return $usage;
+	}
+
+	/**
+	 * Detalhamentos ainda disponíveis no mês (PHP_INT_MAX se não houver limite).
+	 */
+	public static function monthly_remaining(): int {
+		$cap = self::get_monthly_cap();
+		return 0 === $cap ? PHP_INT_MAX : max( 0, $cap - self::get_monthly_usage()['details'] );
+	}
+
 	private static function add_daily_usage( int $details, string $city_slug = '', int $searches = 0 ): void {
+		if ( $details > 0 ) {
+			$month             = self::get_monthly_usage();
+			$month['details'] += $details;
+			update_site_option( 'tf_places_monthly_usage', $month );
+		}
 		$usage             = self::get_daily_usage();
 		$usage['details'] += $details;
 		if ( '' !== $city_slug && $searches > 0 ) {
@@ -310,8 +349,21 @@ class TF_Google_Places {
 	/**
 	 * Quantos detalhamentos este tick pode fazer.
 	 */
+	public static function effective_daily_target(): int {
+		$target = self::get_daily_target();
+		$left   = self::monthly_remaining();
+		if ( PHP_INT_MAX === $left ) {
+			return $target;
+		}
+		// Espalha o saldo do mês pelos dias restantes (inclui o uso já feito hoje).
+		$now       = new DateTimeImmutable( 'now', new DateTimeZone( 'America/Los_Angeles' ) );
+		$days_left = (int) $now->format( 't' ) - (int) $now->format( 'j' ) + 1;
+		$per_day   = (int) floor( ( $left + self::get_daily_usage()['details'] ) / max( 1, $days_left ) );
+		return max( 0, min( $target, $per_day ) );
+	}
+
 	public static function tick_budget(): int {
-		$remaining = max( 0, self::get_daily_target() - self::get_daily_usage()['details'] );
+		$remaining = max( 0, self::effective_daily_target() - self::get_daily_usage()['details'] );
 		if ( 0 === $remaining ) {
 			return 0;
 		}
@@ -352,19 +404,24 @@ class TF_Google_Places {
 		}
 		set_site_transient( self::LOCK_KEY, 1, 10 * MINUTE_IN_SECONDS );
 
-		$city_ids = self::get_city_site_ids();
-		$n_cities = max( 1, count( $city_ids ) );
-		$position = 0;
+		$city_ids   = self::get_city_site_ids();
+		$n_cities   = max( 1, count( $city_ids ) );
+		$position   = 0;
+		$month_left = self::monthly_remaining();
+		if ( 0 === $month_left && ( $process_batch > 0 || $total_budget > 0 ) ) {
+			$summary['errors'][] = 'Limite mensal de ' . self::get_monthly_cap() . ' detalhamentos atingido (cota gratuita do Google). O detalhamento volta no dia 1º; a descoberta de novos locais continua (gratuita).';
+		}
 
 		try {
 			self::for_each_city_site(
-				function ( array $city ) use ( $search_queries, $process_batch, $total_budget, $n_cities, &$position, &$summary ) {
+				function ( array $city ) use ( $search_queries, $process_batch, $total_budget, $n_cities, &$position, &$month_left, &$summary ) {
 					// Fatia do orçamento desta cidade (o resto da divisão vai para as primeiras).
 					$batch = $process_batch;
 					if ( $total_budget > 0 ) {
 						$batch = intdiv( $total_budget, $n_cities ) + ( $position < $total_budget % $n_cities ? 1 : 0 );
 					}
 					$position++;
+					$batch = (int) min( $batch, $month_left );
 
 					// Descoberta: no modo automático, só busca quando a fila da cidade está baixa.
 					$searches = $search_queries;
@@ -391,6 +448,7 @@ class TF_Google_Places {
 					if ( $batch > 0 ) {
 						$res = self::process_queue( $city, $batch );
 						self::add_daily_usage( $res['calls'] );
+						$month_left = max( 0, $month_left - $res['calls'] );
 						foreach ( array( 'created', 'updated', 'skipped' ) as $k ) {
 							$summary[ $k ] += $res[ $k ];
 						}
@@ -609,7 +667,7 @@ class TF_Google_Places {
 			$details = self::request(
 				'GET',
 				'places/' . rawurlencode( $row['place_id'] ),
-				'id,displayName,formattedAddress,addressComponents,location,nationalPhoneNumber,internationalPhoneNumber,websiteUri,rating,userRatingCount,regularOpeningHours,priceLevel,googleMapsUri,businessStatus,editorialSummary',
+				'id,displayName,formattedAddress,addressComponents,location,nationalPhoneNumber,internationalPhoneNumber,websiteUri,rating,userRatingCount,regularOpeningHours,priceLevel,googleMapsUri,businessStatus',
 				null,
 				array( 'languageCode' => 'pt-BR', 'regionCode' => strtolower( $city['country'] ) )
 			);
@@ -720,7 +778,7 @@ class TF_Google_Places {
 			array(
 				'post_type'    => $post_type,
 				'post_title'   => sanitize_text_field( $title ),
-				'post_excerpt' => sanitize_textarea_field( (string) ( $place['editorialSummary']['text'] ?? '' ) ),
+				'post_excerpt' => '',
 				'post_content' => '',
 				'post_status'  => 'pending',
 			),

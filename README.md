@@ -69,3 +69,10 @@ O plugin verifica sozinho se há versão nova no GitHub (`vinimatiascg/plugin-on
 - **Reverificação:** quando não há locais novos, os já processados há mais de 30 dias voltam para a fila (nota, avaliações, horários e telefone atualizados).
 - **Painel:** progresso do dia, próxima rodada, números por cidade e motivos de descarte.
 - **Desempenho:** contador da Fila de Aprovação com cache de 2 minutos (antes percorria todos os sites a cada tela do admin).
+
+## Custo zero: limite mensal (v1.4.1)
+
+- O detalhamento usa campos da faixa **Place Details Enterprise** (telefone, site, horários, nota, avaliações, preço): **1.000 chamadas grátis por mês**, depois US$ 20 por mil. O campo `editorialSummary` foi removido porque elevava cada chamada para *Enterprise + Atmosphere* (US$ 25 por mil).
+- A descoberta usa **Text Search Essentials (IDs Only)**: gratuita e ilimitada.
+- **Limite mensal** (padrão 1.000): o plugin conta os detalhamentos no mês de cobrança do Google (zera dia 1º, horário do Pacífico), espalha o saldo pelos dias restantes e pausa o detalhamento ao atingir o limite, inclusive nos botões manuais. Use 0 para desligar o limite.
+- Meta diária padrão: 32 (32 × 31 = 992/mês).

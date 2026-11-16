@@ -106,7 +106,8 @@ class TF_Harvester_Admin {
 		}
 
 		update_site_option( 'tf_places_enabled', ! empty( $_POST['tf_places_enabled'] ) );
-		update_site_option( 'tf_places_daily_target', max( 10, min( 1000, (int) ( $_POST['tf_places_daily_target'] ?? 100 ) ) ) );
+		update_site_option( 'tf_places_daily_target', max( 1, min( 1000, (int) ( $_POST['tf_places_daily_target'] ?? 32 ) ) ) );
+		update_site_option( 'tf_places_monthly_cap', max( 0, min( 100000, (int) ( $_POST['tf_places_monthly_cap'] ?? 1000 ) ) ) );
 
 		TF_Google_Places::maybe_schedule_cron();
 
@@ -244,7 +245,7 @@ class TF_Harvester_Admin {
 
 				<div class="card" style="margin:0;padding:20px;border-left:4px solid #3B82F6;">
 					<h3 style="margin:0 0 8px;font-size:0.9rem;text-transform:uppercase;color:#64748B;">Hoje</h3>
-					<div style="font-size:1.8rem;font-weight:700;color:#0F172A;"><?php echo esc_html( (string) $usage['details'] ); ?> / <?php echo esc_html( (string) TF_Google_Places::get_daily_target() ); ?></div>
+					<div style="font-size:1.8rem;font-weight:700;color:#0F172A;"><?php echo esc_html( (string) $usage['details'] ); ?> / <?php echo esc_html( (string) TF_Google_Places::effective_daily_target() ); ?></div>
 					<p style="margin:6px 0 0;font-size:0.85rem;color:#64748B;">
 						detalhados hoje · <?php echo esc_html( (string) array_sum( (array) $usage['searches'] ) ); ?> páginas de busca<br>
 						<?php if ( $auto_on && $next_cron ) : ?>
@@ -358,10 +359,19 @@ class TF_Harvester_Admin {
 								</td>
 							</tr>
 							<tr>
+								<th scope="row"><label for="tf_places_monthly_cap">Limite mensal (rede)</label></th>
+								<td>
+									<input type="number" min="0" max="100000" id="tf_places_monthly_cap" name="tf_places_monthly_cap" value="<?php echo esc_attr( (string) TF_Google_Places::get_monthly_cap() ); ?>" class="small-text" /> detalhamentos por mês
+									<?php $m_usage = TF_Google_Places::get_monthly_usage(); ?>
+									<span style="margin-left:8px;color:#64748B;">usados neste mês: <strong><?php echo esc_html( (string) $m_usage['details'] ); ?></strong></span>
+									<p class="description"><strong>1000</strong> = cota gratuita mensal do Google para <em>Place Details Enterprise</em>. Ao atingir, o detalhamento pausa até o dia 1º (a descoberta continua, pois é gratuita). Use <strong>0</strong> para sem limite.</p>
+								</td>
+							</tr>
+							<tr>
 								<th scope="row"><label for="tf_places_daily_target">Meta diária (rede)</label></th>
 								<td>
-									<input type="number" min="10" max="1000" id="tf_places_daily_target" name="tf_places_daily_target" value="<?php echo esc_attr( (string) TF_Google_Places::get_daily_target() ); ?>" class="small-text" /> locais processados por dia
-									<p class="description">Total de locais detalhados por dia em toda a rede, divididos igualmente entre as cidades e espalhados em rodadas de 15 minutos (ex.: 300/dia ≈ 3 a 4 por rodada). Cada local detalhado = 1 chamada <em>Place Details</em> (faixa Enterprise, paga após a cota gratuita mensal do Google). As buscas de descoberta usam a faixa mais barata (<em>IDs Only</em>). Locais já cadastrados são reverificados a cada 30 dias.</p>
+									<input type="number" min="1" max="1000" id="tf_places_daily_target" name="tf_places_daily_target" value="<?php echo esc_attr( (string) TF_Google_Places::get_daily_target() ); ?>" class="small-text" /> locais processados por dia
+									<p class="description">Total de locais detalhados por dia em toda a rede, divididos igualmente entre as cidades e espalhados em rodadas de 15 minutos (ex.: 32/dia ≈ 1 a cada 45 min; 32 × 31 dias = 992, dentro da cota gratuita de 1.000/mês). Cada local detalhado = 1 chamada <em>Place Details</em> (faixa Enterprise, paga após a cota gratuita mensal do Google). As buscas de descoberta usam a faixa mais barata (<em>IDs Only</em>). Locais já cadastrados são reverificados a cada 30 dias.</p>
 								</td>
 							</tr>
 						</table>
