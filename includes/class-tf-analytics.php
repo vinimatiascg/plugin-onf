@@ -21,9 +21,7 @@ class TF_Analytics {
 		add_action( 'admin_menu', array( __CLASS__, 'register_admin_menu' ) );
 		add_action( 'network_admin_menu', array( __CLASS__, 'register_network_admin_menu' ) );
 		add_action( 'admin_post_tf_export_leads_csv', array( __CLASS__, 'handle_csv_export' ) );
-		add_action( 'admin_post_nopriv_tf_export_leads_csv', array( __CLASS__, 'handle_csv_export' ) );
 		add_action( 'wp_ajax_tf_export_leads_csv', array( __CLASS__, 'handle_csv_export' ) );
-		add_action( 'wp_ajax_nopriv_tf_export_leads_csv', array( __CLASS__, 'handle_csv_export' ) );
 		add_action( 'wp_head', array( __CLASS__, 'track_establishment_view' ) );
 		add_shortcode( 'tf_network_metrics', array( __CLASS__, 'render_shortcode_metrics' ) );
 	}
@@ -232,8 +230,8 @@ class TF_Analytics {
 	 * Processa o download do arquivo CSV de contatos / leads.
 	 */
 	public static function handle_csv_export(): void {
-		$token_pass = isset( $_REQUEST['token'] ) && 'onf_leads' === sanitize_key( $_REQUEST['token'] );
-		$is_auth    = current_user_can( 'edit_posts' ) || current_user_can( 'manage_options' ) || $token_pass;
+		// Exportação de leads exige usuário autenticado com permissão de edição (sem token público).
+		$is_auth = is_user_logged_in() && ( current_user_can( 'edit_posts' ) || current_user_can( 'manage_options' ) );
 
 		if ( ! $is_auth ) {
 			wp_die( esc_html__( 'Acesso restrito para administradores e equipe comercial.', 'onde-na-fronteira' ), 'Acesso Negado', array( 'response' => 403 ) );
